@@ -1,0 +1,941 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Element Snap</title>
+<meta name="description" content="Element Snap is a Chrome extension that screenshots any single element on a web page straight to your clipboard.">
+<link rel="icon" href="images/icon32.png" sizes="32x32">
+<link rel="icon" href="images/icon128.png" sizes="128x128">
+<meta property="og:image" content="images/og-hero.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  /* Interface direction follows "unslop" by Damir Sokolovsky (@heydamir), CC BY 4.0. */
+  :root {
+    --bg-deep: #0f0f10; --bg: #141415; --card: #19191b; --raised: #232325; --raised-hover: #2a2a2d;
+    --line: rgba(237,237,237,.08); --line-strong: rgba(237,237,237,.14);
+    --text: #ededed; --text-2: #a1a1a6; --text-3: #85858b;
+    --accent: #f25f24;
+    --positive: #4cc38a; --negative: #e5484d;
+    --ease: cubic-bezier(.22,1,.36,1);
+    --sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html { background: var(--bg); overflow-x: clip; }
+  body { background: var(--bg); color: var(--text); font: 400 15px/22px var(--sans); -webkit-font-smoothing: antialiased; min-width: 1200px; }
+  a { color: inherit; text-decoration: none; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+  h1, h2, h3, h4 { font-weight: 500; }
+  p { color: var(--text-2); }
+  .wrap { width: 1200px; margin: 0 auto; }
+  .i { width: 16px; height: 16px; flex: none; display: block; stroke: currentColor; fill: none; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  kbd { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 4px; background: var(--raised);
+        box-shadow: inset 0 -1px 0 rgba(0,0,0,.4), 0 0 0 1px var(--line); font: 400 12px/1 var(--mono); color: var(--text); vertical-align: middle; }
+  kbd + kbd { margin-left: 4px; }
+  kbd { cursor: pointer; user-select: none; transition: transform 120ms var(--ease), box-shadow 120ms var(--ease), background-color 120ms var(--ease); }
+  kbd:hover { background: var(--raised-hover); }
+  kbd.down { transform: translateY(1px); box-shadow: inset 0 1px 0 rgba(0,0,0,.4), 0 0 0 1px var(--line-strong); background: var(--bg-deep); }
+  kbd:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* crop marks, the signature */
+  .marks { position: absolute; inset: 0; pointer-events: none; }
+  .marks i { position: absolute; width: 12px; height: 12px; border: 0 solid var(--accent); }
+  .marks .tl { left: -6px; top: -6px; border-left-width: 2px; border-top-width: 2px; }
+  .marks .tr { right: -6px; top: -6px; border-right-width: 2px; border-top-width: 2px; }
+  .marks .bl { left: -6px; bottom: -6px; border-left-width: 2px; border-bottom-width: 2px; }
+  .marks .br { right: -6px; bottom: -6px; border-right-width: 2px; border-bottom-width: 2px; }
+
+  /* buttons */
+  .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; padding: 0 20px; border-radius: 8px;
+         font: 500 14px/20px var(--sans); white-space: nowrap; border: 0; cursor: pointer;
+         transition: background-color 140ms var(--ease), color 140ms var(--ease), transform 140ms var(--ease); }
+  .btn:active { transform: scale(.98); }
+  .btn.primary { background: var(--accent); color: #ffffff; }
+  .btn.primary:hover { background: #ff7236; }
+  .btn.secondary { background: var(--raised); color: var(--text); box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 0 rgba(255,255,255,.06); }
+  .btn.secondary:hover { background: var(--raised-hover); }
+  .btn.quiet { background: transparent; color: var(--text-2); padding: 0 12px; }
+  .btn.quiet:hover { color: var(--text); background: var(--raised); }
+  .btn.sm { height: 36px; padding: 0 16px; }
+
+  /* navigation */
+  .nav { height: 64px; display: flex; align-items: center; gap: 32px; }
+  .logo { display: flex; align-items: center; gap: 10px; font: 500 16px/1 var(--sans); }
+  .logo img { width: 24px; height: 24px; border-radius: 6px; display: block; }
+  .nav-links { display: flex; gap: 24px; font-size: 14px; color: var(--text-2); margin-left: 8px; }
+  .nav-links a { transition: color 140ms var(--ease); }
+  .nav-links a:hover { color: var(--text); }
+  .nav .spacer { flex: 1; }
+  .nav .ver { font: 400 12px/16px var(--mono); color: var(--text-3); }
+
+  /* hero */
+  .hero { position: relative; display: grid; grid-template-columns: 480px 1fr; gap: 64px; align-items: center; padding: 56px 0 0; }
+  body { overflow-x: hidden; }
+  .hero > div { position: relative; z-index: 1; }
+  .dot-trail { position: fixed; inset: 0; width: 100%; height: 100%; display: block; z-index: 0; pointer-events: none; }
+  header, main, footer { position: relative; z-index: 1; }
+  @media (hover: none), (pointer: coarse), (prefers-reduced-motion: reduce) { .dot-trail { display: none; } }
+  .hero h1 { font-size: 64px; line-height: 1.04; letter-spacing: -.03em; }
+  .hero h1 span { color: var(--text-3); }
+  .hero .sub { font-size: 19px; line-height: 28px; max-width: 28rem; margin-top: 24px; }
+  .hero .cta { display: flex; gap: 12px; margin-top: 36px; }
+  .hero .meta { display: flex; gap: 20px; margin-top: 24px; font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .hero .meta span { display: flex; align-items: center; gap: 8px; }
+
+  /* the hero visual: a mock page, the selection, and the real panel */
+  .stage { position: relative; height: 560px; width: 900px; }
+  .page { position: absolute; left: 0; top: 0; width: 900px; height: 560px; border-radius: 14px 0 0 0; background: #fafafa; color: #171717;
+          box-shadow: 0 0 0 1px rgba(255,255,255,.06), 0 24px 64px rgba(0,0,0,.45); overflow: hidden; font-family: var(--sans); }
+  .page .chrome { height: 44px; display: flex; align-items: center; gap: 16px; padding: 0 16px; background: #ededed; border-bottom: 1px solid rgba(0,0,0,.08); }
+  .page .dots { display: flex; gap: 6px; }
+  .page .dots i { width: 10px; height: 10px; border-radius: 5px; background: #cfcfcf; display: block; }
+  .page .url { flex: 1; max-width: 420px; height: 28px; border-radius: 6px; background: #fff; box-shadow: inset 0 0 0 1px rgba(0,0,0,.08);
+               display: flex; align-items: center; padding: 0 10px; gap: 8px; font: 400 12px/1 var(--mono); color: #737373; }
+  .page .tools { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+  .page .tools img { width: 20px; height: 20px; border-radius: 5px; display: block; }
+  .page .body { padding: 76px 32px 28px; }
+  .page .ph { display: flex; align-items: baseline; justify-content: space-between; }
+  .page .ph h2 { font: 500 22px/28px var(--sans); color: #171717; letter-spacing: -.01em; }
+  .page .ph span { font: 400 12px/16px var(--mono); color: #737373; }
+  .page .tabs { display: flex; gap: 20px; margin-top: 16px; padding-bottom: 12px; border-bottom: 1px solid rgba(0,0,0,.08); font-size: 13px; color: #737373; }
+  .page .tabs b { font-weight: 500; color: #171717; }
+  .page .grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-top: 20px; }
+  .pc { position: relative; border-radius: 12px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.05); padding: 16px; height: 184px; }
+  .pc .l { font-size: 12px; color: #737373; }
+  .pc .v { font: 500 28px/1 var(--sans); color: #171717; margin-top: 8px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+  .pc .d { font: 400 12px/16px var(--mono); margin-top: 8px; color: #16a34a; }
+  .pc .d.neg { color: #dc2626; }
+  .pc .bars { display: flex; align-items: flex-end; gap: 4px; height: 56px; margin-top: 20px; }
+  .pc .bars i { flex: 1; background: #e5e5e5; border-radius: 2px 2px 0 0; display: block; }
+  .pc .bars i.on { background: #171717; }
+  .pc .rows { margin-top: 16px; display: grid; gap: 8px; font-size: 12px; color: #525252; }
+  .pc .rows div { display: flex; justify-content: space-between; }
+  .pc .rows span:last-child { font-family: var(--mono); color: #171717; }
+  .page .wide { grid-column: 1 / -1; min-height: 140px; }
+  .page .wide .line { height: 8px; border-radius: 4px; background: #f0f0f0; margin-top: 10px; }
+  .page .wide .line.s { width: 60%; }
+  .page .wide .line.m { width: 80%; }
+
+  /* the selection over the middle card */
+  .selbox { position: absolute; left: 32px; top: 216px; width: 268px; height: 184px; outline: 1px solid rgba(242,95,36,.5); pointer-events: none; }
+  .tagbox { position: absolute; left: 26px; top: 182px; display: flex; align-items: center; gap: 8px; height: 24px; padding: 0 8px; border-radius: 6px;
+            background: var(--card); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong), 0 4px 12px rgba(0,0,0,.2);
+            font: 400 12px/16px var(--mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .tagbox b { font-weight: 400; color: var(--text-3); }
+  .hintbar { position: absolute; left: 50%; top: 56px; transform: translateX(-50%); display: flex; align-items: center; gap: 12px; height: 40px; padding: 0 16px; border-radius: 10px;
+             background: var(--card); color: var(--text); box-shadow: inset 0 0 0 1px var(--line-strong), 0 12px 32px rgba(0,0,0,.24); font-size: 13px; white-space: nowrap; }
+  .hintbar .sep { width: 1px; height: 16px; background: var(--line-strong); }
+  .hintbar .k { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+  .hintbar kbd { height: 20px; min-width: 20px; padding: 0 4px; }
+
+  /* the panel, with the extension's own styles */
+  .panel { position: absolute; left: 376px; bottom: 24px; width: 312px; background: var(--card); color: var(--text); border-radius: 14px;
+           box-shadow: inset 0 0 0 1px var(--line-strong), 0 0 0 1px rgba(0,0,0,.12), 0 16px 40px rgba(0,0,0,.28); overflow: hidden; font-size: 13px; line-height: 20px; }
+  .panel .head { display: flex; align-items: center; gap: 4px; height: 44px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--line); }
+  .panel .title { font-weight: 500; }
+  .panel .count { margin-left: 4px; font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .panel .count::after { content: "3"; }
+  .panel .sp { flex: 1; }
+  .panel .tb { height: 28px; padding: 0 8px; border-radius: 6px; font-size: 12px; color: var(--text-3); display: grid; place-items: center; }
+  .panel .ib { width: 28px; height: 28px; border-radius: 6px; color: var(--text-3); display: grid; place-items: center; }
+  .panel .sheet { padding: 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 12px 8px; }
+  .shot { position: relative; }
+  .shot .frame { position: relative; height: 96px; padding: 8px; border-radius: 8px; background: var(--bg-deep); box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; overflow: hidden; }
+  .shot .frame .marks { inset: 8px; opacity: 0; transition: opacity 140ms var(--ease); }
+  .shot .frame .marks i { width: 8px; height: 8px; }
+  .shot .frame .marks .tl { left: -4px; top: -4px; border-left-width: 1.5px; border-top-width: 1.5px; }
+  .shot .frame .marks .tr { right: -4px; top: -4px; border-right-width: 1.5px; border-top-width: 1.5px; }
+  .shot .frame .marks .bl { left: -4px; bottom: -4px; border-left-width: 1.5px; border-bottom-width: 1.5px; }
+  .shot .frame .marks .br { right: -4px; bottom: -4px; border-right-width: 1.5px; border-bottom-width: 1.5px; }
+  .shot .cap { display: flex; justify-content: space-between; height: 24px; padding: 4px 4px 0; font: 400 12px/16px var(--mono); font-variant-numeric: tabular-nums; }
+  .shot .cap .n { color: var(--text-3); }
+  .shot .cap .d { color: var(--text-2); }
+  /* small drawings of what each shot holds */
+  .th { background: #fff; border-radius: 4px; box-shadow: 0 0 0 1px rgba(0,0,0,.08); }
+  .th.card { width: 104px; height: 78px; padding: 8px; }
+  .th.card i { display: block; height: 6px; border-radius: 3px; background: #e5e5e5; margin-bottom: 6px; }
+  .th.card i.big { height: 14px; width: 48px; background: #171717; margin-top: 2px; }
+  .th.card i.g { width: 36px; background: #bfe8d0; }
+  .th.btn { width: 72px; height: 28px; background: #171717; box-shadow: none; display: grid; place-items: center; }
+  .th.btn i { display: block; width: 36px; height: 6px; border-radius: 3px; background: #fafafa; }
+  .th.row { width: 120px; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 8px; }
+  .th.row i { display: block; height: 6px; border-radius: 3px; background: #e5e5e5; }
+  .th.row i:first-child { width: 12px; height: 12px; border-radius: 6px; background: #171717; }
+  .th.row i:nth-child(2) { flex: 1; }
+  .th.row i:last-child { width: 20px; }
+  .panel .foot { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--line); }
+  .panel .pb { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; height: 36px; border-radius: 8px; font: 500 13px/20px var(--sans); }
+  .panel .pb.p { background: var(--text); color: var(--bg); }
+  .panel .split { flex: 1.35; display: flex; gap: 1px; }
+  .panel .pb.s { background: var(--raised); box-shadow: inset 0 0 0 1px var(--line), inset 0 1px 0 rgba(255,255,255,.06); }
+  .panel .split .pb.s:first-child { border-radius: 8px 0 0 8px; padding: 0 12px; }
+  .panel .split .pb.s:last-child { flex: none; width: 36px; border-radius: 0 8px 8px 0; }
+
+  /* the capture, told once: crop marks appear, the card lifts, the thumbnail lands */
+  @media (prefers-reduced-motion: no-preference) {
+    .selbox, .tagbox { animation: appear 6s var(--ease) infinite; }
+    .shot.new { animation: land 6s var(--ease) infinite; }
+    .panel .count::after { animation: count 6s steps(1) infinite; }
+    @keyframes count { 0%, 48% { content: "2"; } 49%, 100% { content: "3"; } }
+    @keyframes appear { 0%, 6% { opacity: 0; } 12%, 44% { opacity: 1; } 50%, 100% { opacity: 0; } }
+    @keyframes land { 0%, 48% { opacity: 0; transform: translateY(8px); } 58%, 100% { opacity: 1; transform: none; } }
+  }
+
+  /* product images */
+  .img { display: block; width: 100%; height: auto; border-radius: 8px; background: var(--bg-deep); }
+  .f .pic-img { margin: 0 0 4px; border-radius: 11px 11px 0 0; overflow: hidden; background: var(--bg-deep); border-bottom: 1px solid var(--line); }
+  .f .pic-img img { display: block; width: 100%; height: auto; }
+  .f.img-card { padding: 0 0 20px; box-shadow: none; border: 1px solid var(--line); }
+  .f.img-card .marks { inset: 7px; }
+  .f.img-card h3, .f.img-card p { padding: 0 24px; }
+  .f.img-card h3 { margin-top: 12px; }
+  .f.span3 { grid-column: 1 / -1; }
+  .f.span3 .pic-img { margin: 0 0 4px; }
+  .step .pic-img { margin: 0 0 16px; border-radius: 11px 11px 0 0; overflow: hidden; background: var(--bg-deep); border-bottom: 1px solid var(--line); }
+  .step .pic-img img { display: block; width: 100%; height: auto; }
+  .step.img-card { padding: 0 0 24px; box-shadow: none; border: 1px solid var(--line); }
+  .step.img-card .n, .step.img-card h3, .step.img-card p { padding: 0 24px; }
+  .step.img-card h3 { margin-top: 8px; }
+  .app .pic-img { margin: 20px 0 0; border-radius: 8px; overflow: hidden; background: var(--bg-deep); border: 1px solid var(--line); }
+  .app .pic-img img { display: block; width: 100%; height: auto; }
+  .install-img { margin-top: 48px; border-radius: 12px 12px 0 0; overflow: hidden; border: 1px solid var(--line); border-bottom: 0; background: var(--bg-deep); }
+  .install-img img { display: block; width: 100%; height: auto; }
+  .install-img + .install { margin-top: 16px; }
+  .problem-imgs { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 48px; align-items: start; }
+  .problem-imgs figure { border-radius: 12px; background: var(--card); border: 1px solid var(--line); overflow: hidden; }
+  .problem-imgs figure img { display: block; width: 100%; height: auto; border-bottom: 1px solid var(--line); }
+  .problem-imgs figcaption { display: flex; align-items: center; justify-content: space-between; height: 44px; padding: 0 16px; font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .problem-imgs figcaption b { font-weight: 400; color: var(--text-2); }
+
+  /* sections */
+  section { padding: 112px 0 0; }
+  .sec-h { display: block; }
+  .sec-h .k { font: 400 12px/16px var(--mono); color: var(--text-3); margin-bottom: 12px; }
+  .sec-h h2 { font-size: 32px; line-height: 1.15; letter-spacing: -.02em; max-width: 36rem; }
+  .sec-h p { font-size: 17px; line-height: 26px; margin-top: 16px; max-width: 36rem; }
+  .sec-h p + p { margin-top: 12px; }
+
+  /* features */
+  .features { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 48px; }
+  .f { position: relative; padding: 24px; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); min-height: 184px; display: flex; flex-direction: column; gap: 12px;
+       transition: background-color 140ms var(--ease); }
+  .f:hover { background: #1c1c1e; }
+  .f .marks { inset: 8px; opacity: 0; transition: opacity 140ms var(--ease); }
+  .f .marks i { width: 10px; height: 10px; }
+  .f:hover .marks { opacity: 1; }
+  .f .ic { width: 32px; height: 32px; border-radius: 8px; background: var(--raised); display: grid; place-items: center; color: var(--text-2); }
+  .f h3 { font-size: 16px; line-height: 22px; margin-top: auto; }
+  .f p { font-size: 14px; line-height: 20px; }
+  .f.wide { grid-column: span 2; flex-direction: row; align-items: flex-end; gap: 32px; }
+  .f.wide .t { display: flex; flex-direction: column; gap: 12px; flex: 1; height: 100%; }
+  .f.wide .pic { position: relative; width: 300px; height: 136px; border-radius: 8px; background: var(--bg-deep); box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; }
+  .f.wide .pic .box { position: relative; width: 148px; height: 72px; border-radius: 6px; background: #fff; }
+  .f.wide .pic .box .marks i { width: 12px; height: 12px; }
+  .f.wide .pic .tagbox { left: auto; right: 16px; top: 12px; }
+  .f .pic .marks { opacity: 1; }
+  .f.wide .pic .sheet { display: grid; grid-template-columns: repeat(3, 72px); gap: 8px; }
+  .f.wide .pic .sheet .mini { height: 56px; border-radius: 6px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; overflow: hidden; }
+  .f.wide .pic .sheet .mini .th { zoom: .5; }
+  .f.wide .pic .sheet .mini.on { box-shadow: inset 0 0 0 1px var(--accent); }
+  .f.wide .pic .cnt { position: absolute; left: 16px; top: 12px; font: 400 12px/16px var(--mono); color: var(--text-3); }
+
+  /* how it works */
+  .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-top: 48px; }
+  .step { padding: 24px; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); }
+  .step .n { font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .step h3 { font-size: 18px; line-height: 24px; margin-top: 40px; }
+  .step.img-card h3 { margin-top: 8px; }
+  .step p { font-size: 14px; line-height: 20px; margin-top: 8px; }
+  .step p kbd { height: 20px; min-width: 20px; }
+
+  /* tables */
+  .tbl { margin-top: 48px; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); overflow: hidden; }
+  .tbl .r { display: grid; grid-template-columns: 300px 1fr; gap: 24px; align-items: center; min-height: 52px; padding: 12px 24px; border-top: 1px solid var(--line); font-size: 14px; }
+  .tbl .r:first-child { border-top: 0; }
+  .tbl .r.h { min-height: 40px; padding: 10px 24px; font: 400 12px/16px var(--mono); color: var(--text-3); background: var(--bg-deep); }
+  .tbl .r .c1 { display: flex; align-items: center; gap: 8px; color: var(--text); }
+  .tbl .r .c2 { color: var(--text-2); }
+  .tbl .r .c1 .or { color: var(--text-3); font-size: 12px; margin: 0 4px; }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 48px; }
+  .two .tbl { margin-top: 0; }
+  .two .tbl .r { grid-template-columns: 1fr; gap: 4px; }
+
+  /* apps */
+  .apps { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 48px; }
+  .app { padding: 24px; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); }
+  .app .k { font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .app h3 { font-size: 18px; line-height: 24px; margin-top: 8px; }
+  .app .list { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 20px; }
+  .app .list span { height: 28px; padding: 0 10px; border-radius: 6px; background: var(--raised); display: inline-flex; align-items: center; font-size: 13px; color: var(--text); }
+  .app p { font-size: 14px; line-height: 20px; margin-top: 20px; }
+  .app .stack { display: flex; gap: 12px; margin-top: 20px; }
+  .app .stack .mini { height: 56px; flex: 1; border-radius: 6px; background: var(--bg-deep); box-shadow: inset 0 0 0 1px var(--line); display: grid; place-items: center; overflow: hidden; }
+  .app .stack .mini .th { zoom: .6; }
+  .app .stack .mini.tall { flex: none; width: 96px; }
+  .th.comb { width: 40px; height: 44px; padding: 5px; display: grid; gap: 3px; align-content: start; }
+  .th.comb i { display: block; height: 8px; border-radius: 2px; background: #e5e5e5; }
+  .th.comb i:first-child { background: #171717; width: 60%; }
+  .th.comb i:last-child { height: 14px; }
+
+  /* install */
+  .install { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 48px; }
+  .install ol { list-style: none; padding: 0; display: grid; gap: 8px; counter-reset: s; }
+  .install ol li { display: grid; grid-template-columns: 40px 1fr; gap: 16px; padding: 20px 24px; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); font-size: 14px; line-height: 20px; color: var(--text-2); }
+  .install ol li::before { counter-increment: s; content: "0" counter(s); font: 400 12px/20px var(--mono); color: var(--text-3); }
+  .install ol li b { display: block; font-weight: 500; color: var(--text); margin-bottom: 4px; }
+  .install ol li code { font: 400 13px/20px var(--mono); color: var(--text); }
+  .install .note { padding: 24px; border-radius: 12px; background: var(--bg-deep); box-shadow: inset 0 0 0 1px var(--line); align-self: start; }
+  .install .note h3 { font-size: 16px; line-height: 22px; }
+  .install .note p { font-size: 14px; line-height: 20px; margin-top: 8px; }
+  .install .note .btn { margin-top: 20px; }
+  .install .note .perm { margin-top: 32px; padding-top: 24px; border-top: 1px solid var(--line); }
+  .install .note .perm ul { list-style: none; padding: 0; display: grid; gap: 8px; margin-top: 12px; font-size: 14px; line-height: 20px; color: var(--text-2); }
+  .install .note .perm li { display: flex; gap: 10px; align-items: flex-start; }
+  .install .note .perm li .i { margin-top: 2px; color: var(--text-3); }
+
+  /* faq */
+  .faq { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; margin-top: 48px; border-top: 1px solid var(--line); }
+  .faq div { padding: 24px 0; border-bottom: 1px solid var(--line); }
+  .faq h3 { font-size: 15px; line-height: 22px; }
+  .faq p { font-size: 14px; line-height: 20px; margin-top: 8px; }
+
+  /* changes */
+  .log { margin-top: 48px; display: grid; gap: 8px; }
+  .log .e { display: grid; grid-template-columns: 120px 140px 1fr; gap: 24px; padding: 20px 24px; border-radius: 12px; background: var(--card); box-shadow: inset 0 0 0 1px var(--line); font-size: 14px; line-height: 20px; }
+  .log .e .v { font: 500 14px/20px var(--mono); }
+  .log .e .d { font: 400 12px/20px var(--mono); color: var(--text-3); }
+  .log .e .w { color: var(--text-2); }
+  .log .e.next { background: transparent; box-shadow: inset 0 0 0 1px var(--line); grid-template-columns: 200px 100px 1fr; }
+  .log .e.next .v { font-family: var(--sans); }
+  .log a.more { font-size: 14px; color: var(--text-2); display: inline-flex; align-items: center; gap: 8px; margin-top: 16px; }
+  .log a.more:hover { color: var(--text); }
+
+  /* footer */
+  footer { margin-top: 128px; border-top: 1px solid var(--line); }
+  .foot-cta { padding: 96px 0; display: grid; grid-template-columns: 1fr auto; gap: 48px; align-items: center; }
+  .foot-cta h2 { font-size: 40px; line-height: 1.1; letter-spacing: -.02em; }
+  .foot-cta p { margin-top: 12px; font-size: 16px; }
+  .foot-cta .btns { display: flex; align-items: center; gap: 16px; }
+  .foot-cta .ver { display: flex; align-items: center; gap: 8px; font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .chrome-ic { flex: none; fill: currentColor; display: block; }
+  .browsers { margin-top: 32px; display: grid; grid-template-columns: 1.7fr repeat(5, 1fr); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--card); }
+  .browsers .b { display: grid; align-content: center; gap: 8px; min-height: 96px; padding: 20px 24px; border-left: 1px solid var(--line); }
+  .browsers .b:first-child { border-left: 0; background: #1d1d1f; }
+  .browsers .nm { display: flex; align-items: center; gap: 10px; font: 500 15px/20px var(--sans); color: var(--text-2); }
+  .browsers .now .nm { color: var(--text); font-size: 17px; }
+  .browsers .st { display: flex; align-items: center; gap: 8px; font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .browsers .now .st { color: var(--positive); }
+  .browsers .now .st::before { content: ""; width: 6px; height: 6px; border-radius: 3px; background: var(--positive); }
+  .wm { position: relative; margin: 0 0 56px; }
+  .wm-text { font: 600 188px/1 var(--sans); letter-spacing: -.05em; white-space: nowrap; text-align: center; padding: 8px 0 20px;
+             background-image: radial-gradient(circle, rgba(237,237,237,.62) 1.2px, transparent 1.5px); background-size: 6px 6px; background-position: center;
+             -webkit-background-clip: text; background-clip: text; color: transparent; user-select: none; }
+  .wm-sel { position: absolute; inset: 0; outline: 1px solid rgba(242,95,36,0); transition: outline-color 400ms var(--ease) 200ms; pointer-events: none; }
+  .wm-sel .marks i { width: 16px; height: 16px; opacity: 0; transition: transform 600ms var(--ease), opacity 300ms var(--ease); }
+  .wm-sel .marks .tl { left: -8px; top: -8px; transform: translate(48px, 32px); }
+  .wm-sel .marks .tr { right: -8px; top: -8px; transform: translate(-48px, 32px); }
+  .wm-sel .marks .bl { left: -8px; bottom: -8px; transform: translate(48px, -32px); }
+  .wm-sel .marks .br { right: -8px; bottom: -8px; transform: translate(-48px, -32px); }
+  .wm .tagbox { left: -8px; top: -40px; opacity: 0; transform: translateY(6px); transition: opacity 300ms var(--ease) 450ms, transform 300ms var(--ease) 450ms; }
+  .wm.in .wm-sel { outline-color: rgba(242,95,36,.45); }
+  .wm.in .wm-sel .marks i { opacity: 1; transform: none; }
+  .wm.in .tagbox { opacity: 1; transform: none; }
+  @media (prefers-reduced-motion: reduce) { .wm-sel, .wm-sel .marks i, .wm .tagbox { transition: none; } }
+  .foot-row { height: 72px; border-top: 1px solid var(--line); display: flex; align-items: center; gap: 16px; font-size: 13px; color: var(--text-3); }
+  .foot-row .fver { font: 400 12px/16px var(--mono); color: var(--text-3); padding-left: 16px; border-left: 1px solid var(--line); }
+  .sig { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
+  .sig .by { font: 400 12px/16px var(--mono); color: var(--text-3); }
+  .sig .nm { position: relative; font: 500 15px/20px var(--sans); color: var(--text); letter-spacing: -.005em; padding: 4px 8px; margin: 0 -2px; }
+  .sig .nm i { position: absolute; width: 6px; height: 6px; border: 0 solid var(--accent); opacity: 0; transition: opacity 160ms var(--ease), transform 180ms var(--ease); }
+  .sig .nm .tl { left: 0; top: 0; border-left-width: 1.5px; border-top-width: 1.5px; transform: translate(3px, 3px); }
+  .sig .nm .tr { right: 0; top: 0; border-right-width: 1.5px; border-top-width: 1.5px; transform: translate(-3px, 3px); }
+  .sig .nm .bl { left: 0; bottom: 0; border-left-width: 1.5px; border-bottom-width: 1.5px; transform: translate(3px, -3px); }
+  .sig .nm .br { right: 0; bottom: 0; border-right-width: 1.5px; border-bottom-width: 1.5px; transform: translate(-3px, -3px); }
+  .sig:hover .nm i { opacity: 1; transform: none; }
+  .sig .sep { width: 1px; height: 14px; background: var(--line-strong); }
+  .sig .role { font: 400 14px/20px var(--sans); color: var(--text-2); }
+  .foot-row .spacer { flex: 1; }
+  .foot-row a:hover { color: var(--text); }
+
+  /* ---------- responsive: small laptops, tablets, phones ---------- */
+  body { min-width: 0; }
+  .wrap { width: min(1200px, calc(100% - 64px)); }
+  header { z-index: 3 !important; }
+  .stage-box { position: relative; }
+  .menu-btn { display: none; width: 36px; height: 36px; border: 0; border-radius: 8px; background: var(--raised); color: var(--text); place-items: center; cursor: pointer;
+              box-shadow: inset 0 0 0 1px var(--line); }
+  .wm-text { font-size: min(188px, calc((100vw - 64px) * .155)); }
+
+  @media (max-width: 1024px) {
+    section { padding-top: 88px; }
+    .hero { grid-template-columns: 1fr; gap: 48px; padding-top: 40px; }
+    .hero > div:first-child { max-width: 600px; }
+    .hero h1 { font-size: 56px; }
+    .stage-box { --vw: 900; width: 100%; overflow: hidden; border-radius: 14px; box-shadow: 0 24px 64px rgba(0,0,0,.45); }
+    .stage { transform: scale(var(--s, 1)); transform-origin: 0 0; }
+    .page { border-radius: 14px; box-shadow: none; }
+    .browsers { grid-template-columns: repeat(5, 1fr); }
+    .browsers .now { grid-column: 1 / -1; }
+    .browsers .b:not(.now) { border-top: 1px solid var(--line); }
+    .browsers .b:nth-child(2) { border-left: 0; }
+    .foot-cta { grid-template-columns: 1fr; gap: 32px; padding: 72px 0; }
+    .wm-text { background-size: 5px 5px; background-image: radial-gradient(circle, rgba(237,237,237,.62) 1px, transparent 1.3px); }
+  }
+
+  @media (max-width: 900px) {
+    .nav { gap: 12px; }
+    .nav .ver { display: none; }
+    .menu-btn { display: grid; }
+    .nav-links { display: none; position: absolute; left: 0; right: 0; top: 60px; z-index: 20; margin: 0; flex-direction: column; gap: 2px; padding: 8px;
+                 background: var(--card); border-radius: 12px; box-shadow: inset 0 0 0 1px var(--line-strong), 0 16px 40px rgba(0,0,0,.4); }
+    header.open .nav-links { display: flex; animation: pop 160ms var(--ease); }
+    @keyframes pop { from { opacity: 0; transform: translateY(-4px); } }
+    .nav-links a { padding: 10px 12px; border-radius: 8px; font-size: 15px; color: var(--text); }
+    .nav-links a:hover { background: var(--raised); }
+  }
+
+  @media (max-width: 820px) {
+    .features, .problem-imgs, .apps, .two, .install, .steps { grid-template-columns: 1fr; }
+    .faq { grid-template-columns: 1fr; gap: 0; }
+    .install-img + .install { margin-top: 16px; }
+  }
+
+  @media (max-width: 640px) {
+    .wrap { width: calc(100% - 32px); }
+    section { padding-top: 72px; }
+    .nav .btn.sm { height: 36px; padding: 0 14px; }
+    .hero { gap: 40px; padding-top: 24px; }
+    .hero h1 { font-size: 40px; line-height: 1.06; letter-spacing: -.025em; }
+    .hero .sub { font-size: 17px; line-height: 26px; margin-top: 16px; }
+    .hero .cta { flex-direction: column; align-items: stretch; margin-top: 28px; gap: 8px; }
+    .hero .meta { flex-wrap: wrap; gap: 8px 16px; }
+    /* the hero preview: show the left part of the mock page larger, panel moved in */
+    .stage-box { --vw: 620; }
+    .hintbar { display: none; }
+    .page .body { padding-top: 28px; }
+    .selbox { top: 168px; }
+    .page .tagbox { top: 134px; }
+    .panel { left: 300px; bottom: 16px; }
+    .sec-h h2 { font-size: 26px; }
+    .sec-h p { font-size: 16px; line-height: 24px; }
+    .features, .problem-imgs, .apps, .two, .steps, .log { margin-top: 32px; }
+    .f.img-card h3, .f.img-card p, .step.img-card .n, .step.img-card h3, .step.img-card p { padding: 0 16px; }
+    .app { padding: 16px; }
+    .app .list span { font-size: 12px; }
+    .problem-imgs figcaption { flex-wrap: wrap; height: auto; min-height: 44px; padding: 12px 16px; gap: 4px 12px; }
+    .tbl .r { padding: 12px 16px; }
+    .tbl .r.h { padding: 10px 16px; }
+    .install-img { margin-top: 32px; }
+    .install ol li { grid-template-columns: 24px 1fr; gap: 12px; padding: 16px; }
+    .install .note { padding: 16px; }
+    .faq div { padding: 20px 0; }
+    .log .e { grid-template-columns: auto 1fr; gap: 4px 16px; padding: 16px; }
+    .log .e .w { grid-column: 1 / -1; }
+    .browsers { grid-template-columns: 1fr; }
+    .browsers .b { display: flex; justify-content: space-between; align-items: center; min-height: 56px; padding: 14px 16px; border-left: 0 !important; border-top: 1px solid var(--line); }
+    .browsers .now { border-top: 0; }
+    .browsers .now .nm { font-size: 16px; }
+    .foot-cta { padding: 56px 0; }
+    .foot-cta h2 { font-size: 30px; }
+    .foot-cta .btns { flex-direction: column-reverse; align-items: stretch; gap: 12px; }
+    .foot-cta .btns .btn { width: 100%; }
+    .wm { margin-bottom: 32px; }
+    .wm-text { font-size: calc((100vw - 32px) * .155); padding: 4px 0 10px;
+               background-size: 3px 3px; background-image: radial-gradient(circle, rgba(237,237,237,.7) .7px, transparent .95px); }
+    .wm .tagbox { top: -34px; }
+    .foot-row { flex-wrap: wrap; height: auto; padding: 24px 0 32px; gap: 16px; }
+    .foot-row .spacer { flex-basis: 100%; height: 0; }
+    .sig { flex-wrap: wrap; white-space: normal; gap: 6px 12px; }
+  }
+</style>
+</head>
+<body>
+<canvas class="dot-trail" id="trail" aria-hidden="true"></canvas>
+
+<header class="wrap">
+  <nav class="nav" aria-label="Main">
+    <a class="logo" href="#"><img src="images/icon128.png" alt="" width="24" height="24">Element Snap</a>
+    <div class="nav-links" id="navlinks">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#keys">Keys</a>
+      <a href="#install">Install</a>
+      <a href="#faq">Limits</a>
+      <a href="#changes">What's new</a>
+    </div>
+    <span class="spacer"></span>
+    <span class="ver">v1.4.1</span>
+    <a class="btn secondary sm" href="#" data-inert>Download</a>
+    <button class="menu-btn" type="button" aria-label="Menu" aria-expanded="false" aria-controls="navlinks"><svg class="i" viewBox="0 0 24 24"><path d="M4 7h16"/><path d="M4 12h16"/><path d="M4 17h16"/></svg></button>
+  </nav>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <div>
+      <h1>Any element,<br>straight to<br>your clipboard</h1>
+      <p class="sub">Element Snap is a Chrome extension that screenshots one piece of a web page and copies it. Paste it into a doc, a deck, a ticket or a chat, with no cropping in between.</p>
+      <div class="cta">
+        <a class="btn primary" href="#" data-inert>
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+          Download Element Snap 1.4.1
+        </a>
+        <a class="btn quiet" href="#how">See how it works</a>
+      </div>
+      <div class="meta">
+        <span><svg class="chrome-ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257c.206.01.413.016.621.016 6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728 4.364 4.364 0 0 1 0 8.728Z"/></svg>Available for Chrome</span>
+        <span>No account</span>
+        <span>Works in Claude artifacts</span>
+      </div>
+    </div>
+
+    <div class="stage-box"><div class="stage" aria-label="A card on a web page framed with orange crop marks, and the Element Snap panel holding three shots">
+      <div class="page" aria-hidden="true">
+        <div class="chrome">
+          <div class="dots"><i></i><i></i><i></i></div>
+          <div class="url"><svg class="i" viewBox="0 0 24 24" style="width:12px;height:12px;stroke:#a3a3a3"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>app.northwind.com/reports/q4</div>
+          <div class="tools"><img src="images/icon128.png" alt=""></div>
+        </div>
+        <div class="body">
+          <div class="ph"><h2>Q4 launch report</h2><span>Updated 5 Nov 2026</span></div>
+          <div class="tabs"><b>Overview</b><span>Traffic</span><span>Signups</span><span>Revenue</span></div>
+          <div class="grid">
+            <div class="pc">
+              <div class="l">Visitors</div><div class="v">48,210</div><div class="d">+12% vs last month</div>
+              <div class="bars"><i style="height:30%"></i><i style="height:42%"></i><i style="height:38%"></i><i style="height:55%"></i><i style="height:48%"></i><i style="height:70%"></i><i style="height:64%"></i><i class="on" style="height:100%"></i></div>
+            </div>
+            <div class="pc">
+              <div class="l">Signups</div><div class="v">1,942</div><div class="d">+8% vs last month</div>
+              <div class="rows"><div><span>Organic</span><span>1,120</span></div><div><span>Referral</span><span>486</span></div><div><span>Paid</span><span>336</span></div></div>
+            </div>
+            <div class="pc">
+              <div class="l">Churn</div><div class="v">2.1%</div><div class="d neg">+0.3 pt vs last month</div>
+              <div class="bars"><i style="height:60%"></i><i style="height:52%"></i><i style="height:48%"></i><i style="height:44%"></i><i style="height:50%"></i><i style="height:40%"></i><i style="height:46%"></i><i class="on" style="height:58%"></i></div>
+            </div>
+            <div class="pc wide">
+              <div class="l">Notes</div>
+              <div class="line m"></div><div class="line"></div><div class="line s"></div>
+            </div>
+          </div>
+        </div>
+        <div class="hintbar"><span>Click or <kbd>Space</kbd> to capture</span><span class="sep"></span><span class="k"><kbd>Shift</kbd> Add</span><span class="k">Drag for an area</span><span class="k"><kbd>↑</kbd><kbd>↓</kbd> Resize</span><span class="k"><kbd>Esc</kbd> Cancel</span></div>
+        <div class="selbox"><div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div></div>
+        <div class="tagbox">div.pc <b>268 × 184</b></div>
+      </div>
+
+      <div class="panel" aria-hidden="true">
+        <div class="head"><span class="title">Element Snap</span><span class="count"></span><span class="sp"></span><span class="tb">Clear</span>
+          <span class="ib"><svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/></svg></span>
+          <span class="ib"><svg class="i" viewBox="0 0 24 24"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg></span></div>
+        <div class="sheet">
+          <div class="shot"><div class="frame"><div class="th btn"><i></i></div><div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div></div><div class="cap"><span class="n">01</span><span class="d">144 × 44</span></div></div>
+          <div class="shot"><div class="frame"><div class="th row"><i></i><i></i><i></i></div><div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div></div><div class="cap"><span class="n">02</span><span class="d">480 × 56</span></div></div>
+          <div class="shot new"><div class="frame"><div class="th card"><i class="g"></i><i class="big"></i><i></i><i style="width:60%"></i></div><div class="marks" style="opacity:1"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div></div><div class="cap"><span class="n">03</span><span class="d">268 × 184</span></div></div>
+        </div>
+        <div class="foot">
+          <span class="pb p"><svg class="i" viewBox="0 0 24 24"><path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/></svg>Capture</span>
+          <span class="split"><span class="pb s"><svg class="i" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>Copy all</span><span class="pb s"><svg class="i" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg></span></span>
+        </div>
+      </div>
+    </div></div>
+  </section>
+
+  <section id="problem">
+    <div class="sec-h">
+      <div class="k">The problem</div>
+      <div>
+        <h2>A full-screen screenshot is the wrong size every time</h2>
+        <p>You take the whole screen, open an editor, crop to the one card you wanted and paste. Chrome has a built-in way to capture a single node, but it's buried inside DevTools, four clicks deep. Element Snap puts that one action on the page itself.</p>
+      </div>
+    </div>
+    <div class="problem-imgs">
+      <figure><img src="images/how-hover.png" alt="A card on a page outlined with crop marks" width="664" height="264"><figcaption><span>What you pick</span><b>div.pc · 173 × 120</b></figcaption></figure>
+      <figure><img src="images/how-paste.png" alt="The same card pasted into a chat message" width="664" height="264"><figcaption><span>What you paste</span><b>One image, no cropping</b></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="features">
+    <div class="sec-h">
+      <div class="k">What it does</div>
+      <div><h2>Pick the element, get the picture</h2></div>
+    </div>
+    <div class="features">
+      <div class="f img-card">
+        <div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+        <div class="pic-img"><img src="images/feat-capture.png" alt="" width="664" height="384"></div>
+        <h3>Capture one element</h3>
+        <p>Hover any part of a page and it's outlined with crop marks. Click it, or press Space, and it's copied.</p>
+      </div>
+      <div class="f img-card">
+        <div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+        <div class="pic-img"><img src="images/feat-fullheight.png" alt="" width="664" height="384"></div>
+        <h3>Full height</h3>
+        <p>An element taller than the screen is scrolled through view and stitched into one image. The page is put back where it was.</p>
+      </div>
+      <div class="f img-card">
+        <div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+        <div class="pic-img"><img src="images/feat-several.png" alt="" width="664" height="384"></div>
+        <h3>Several at once</h3>
+        <p>Shift-click elements to mark them, numbered 1, 2, 3. Each one becomes its own shot.</p>
+      </div>
+      <div class="f img-card">
+        <div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+        <div class="pic-img"><img src="images/feat-area.png" alt="" width="664" height="384"></div>
+        <h3>Any area</h3>
+        <p>Press and drag to draw a box when what you want isn't a single element.</p>
+      </div>
+      <div class="f img-card">
+        <div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+        <div class="pic-img"><img src="images/feat-space.png" alt="" width="664" height="384"></div>
+        <h3>Space keeps menus open</h3>
+        <p>Space doesn't touch the page, so open menus, tooltips and hover states stay as they look.</p>
+      </div>
+      <div class="f img-card">
+        <div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+        <div class="pic-img"><img src="images/feat-artifact.png" alt="" width="664" height="384"></div>
+        <h3>Works inside Claude artifacts</h3>
+        <p>Elements inside published artifacts can be picked and captured like any other page.</p>
+      </div>
+      <div class="f img-card span3">
+        <div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div>
+        <div class="pic-img"><img src="images/feat-modal.png" alt="" width="1168" height="384"></div>
+        <h3>Stays out of the way</h3>
+        <p>The panel sits above a page's pop-ups, dialogs and overlays, and clicking it never closes them. Up to 50 shots are kept across pages: copy one, copy all, download all as PNG files, or drag a thumbnail into another app.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="sec-h">
+      <div class="k">How it works</div>
+      <div><h2>Three steps, no editor</h2></div>
+    </div>
+    <div class="steps">
+      <div class="step img-card"><div class="pic-img"><img src="images/how-start.png" alt="" width="664" height="264"></div><div class="n">01</div><h3>Start picking</h3><p>Click the toolbar icon, press <span style="white-space:nowrap"><kbd>Alt</kbd><kbd>Shift</kbd><kbd>S</kbd></span>, or press Capture in the panel. A hint bar at the top of the page lists the controls.</p></div>
+      <div class="step img-card"><div class="pic-img"><img src="images/how-hover.png" alt="" width="664" height="264"></div><div class="n">02</div><h3>Hover and click</h3><p>The element under the mouse gets crop marks and a label with its size. Click it, or press <kbd>Space</kbd>, and it's copied and added to the panel.</p></div>
+      <div class="step img-card"><div class="pic-img"><img src="images/how-paste.png" alt="" width="664" height="264"></div><div class="n">03</div><h3>Paste or drag</h3><p>Paste it where you need it with <span style="white-space:nowrap"><kbd>Ctrl</kbd><kbd>V</kbd></span> or <span style="white-space:nowrap"><kbd>⌘</kbd><kbd>V</kbd></span>, or drag the thumbnail out of the panel into another app.</p></div>
+    </div>
+  </section>
+
+  <section id="keys">
+    <div class="sec-h">
+      <div class="k">Keyboard</div>
+      <div><h2>Every control while picking</h2></div>
+    </div>
+    <div class="two">
+      <div class="tbl" role="table" aria-label="While picking">
+        <div class="r h" role="row"><span>While picking</span></div>
+        <div class="r" role="row"><span class="c1">Click <span class="or">or</span> <kbd>Space</kbd></span><span class="c2">Captures the outlined element, plus any marked ones</span></div>
+        <div class="r" role="row"><span class="c1"><kbd>Shift</kbd> click <span class="or">or</span> <kbd>Shift</kbd><kbd>Space</kbd></span><span class="c2">Marks the element and keeps picking</span></div>
+        <div class="r" role="row"><span class="c1"><kbd>Enter</kbd></span><span class="c2">Captures the marked elements</span></div>
+        <div class="r" role="row"><span class="c1">Press and drag</span><span class="c2">Captures the area inside the box</span></div>
+        <div class="r" role="row"><span class="c1"><kbd>↑</kbd><kbd>↓</kbd></span><span class="c2">Selects the larger element around it, or goes back</span></div>
+        <div class="r" role="row"><span class="c1"><kbd>Esc</kbd></span><span class="c2">Cancels</span></div>
+      </div>
+      <div class="tbl" role="table" aria-label="In the panel">
+        <div class="r h" role="row"><span>In the panel</span></div>
+        <div class="r" role="row"><span class="c1">Click a thumbnail</span><span class="c2">Copies that shot</span></div>
+        <div class="r" role="row"><span class="c1">Copy all</span><span class="c2">Copies every shot, in order</span></div>
+        <div class="r" role="row"><span class="c1">Download all</span><span class="c2">Saves each shot as its own PNG and opens the folder</span></div>
+        <div class="r" role="row"><span class="c1">Drag a thumbnail</span><span class="c2">Drops that shot into another app</span></div>
+        <div class="r" role="row"><span class="c1">Clear, pressed twice</span><span class="c2">Removes all shots</span></div>
+        <div class="r" role="row"><span class="c1">Drag the title bar</span><span class="c2">Moves the panel. Shots are kept when it's hidden</span></div>
+      </div>
+    </div>
+    <div class="problem-imgs" style="margin-top:16px">
+      <figure><img src="images/feat-panel.png" alt="The panel with four shots and the Download all menu open" width="664" height="384"><figcaption><span>The panel</span><b>Copy all, Download all, drag</b></figcaption></figure>
+      <figure><img src="images/feat-several.png" alt="Three cards marked 1, 2 and 3 with the hint bar reading 3 marked" width="664" height="384"><figcaption><span>Marked elements</span><b>Enter captures all three</b></figcaption></figure>
+    </div>
+  </section>
+
+  <section id="apps">
+    <div class="sec-h">
+      <div class="k">Pasting</div>
+      <div>
+        <h2>Works with your apps</h2>
+        <p>Chrome can put one picture on the clipboard at a time. Apps that read rich content get every shot as its own image. Apps that take only pictures get one combined image, so for those use Download all or drag the thumbnails one by one.</p>
+      </div>
+    </div>
+    <div class="apps">
+      <div class="app">
+        <div class="k">Copy all pastes separate images</div>
+        <h3>Rich editors</h3>
+        <div class="list"><span>Google Docs</span><span>Gmail</span><span>Word</span><span>Outlook</span><span>Notion</span></div>
+        <div class="pic-img"><img src="images/paste-docs.png" alt="Three shots pasted into a document as separate images" width="664" height="384"></div>
+        <p>Paste once and the shots arrive as separate images, in the order you took them.</p>
+      </div>
+      <div class="app">
+        <div class="k">Copy all pastes one combined image</div>
+        <h3>Picture-only apps</h3>
+        <div class="list"><span>Claude chat</span><span>Figma</span><span>Slack</span><span>WhatsApp</span><span>Image editors</span></div>
+        <div class="pic-img"><img src="images/paste-download.png" alt="A folder of numbered PNG files saved by Download all" width="664" height="384"></div>
+        <p>Use Download all and drag the files in, or drag thumbnails from the panel one at a time.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="sec-h">
+      <div class="k">Install</div>
+      <div>
+        <h2>About two minutes, no account, no coding</h2>
+        <p>Element Snap loads as an unpacked folder, so Chrome runs it from wherever you unzip it.</p>
+      </div>
+    </div>
+    <div class="install-img"><img src="images/install-extensions.png" alt="chrome://extensions with Developer mode on and the Element Snap card loaded" width="1168" height="384"></div>
+    <div class="install">
+      <ol>
+        <li><span><b>Unzip the download</b>You get a folder called <code>element-snap</code>. Keep it where it is, because Chrome loads the extension from it.</span></li>
+        <li><span><b>Turn on Developer mode</b>Open <code>chrome://extensions</code> and switch on Developer mode, top right.</span></li>
+        <li><span><b>Load the folder</b>Click Load unpacked and choose the <code>element-snap</code> folder.</span></li>
+        <li><span><b>Pin it</b>Open the puzzle-piece menu in the toolbar and pin Element Snap, so its icon is always there.</span></li>
+      </ol>
+      <div class="note">
+        <h3>Updating</h3>
+        <p>Replace the folder with the new one, then click the reload icon on Element Snap's card in <code class="mono" style="font-size:13px;color:var(--text)">chrome://extensions</code>. Refresh any open Claude artifacts afterwards.</p>
+        <a class="btn secondary sm" href="#" data-inert>Download 1.4.1</a>
+        <div class="perm">
+          <h3>Permissions it uses</h3>
+          <ul>
+            <li><svg class="i" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="3" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/></svg><span>The current tab, only when you click the icon</span></li>
+            <li><svg class="i" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg><span>Copying to the clipboard</span></li>
+            <li><svg class="i" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg><span>Saving downloads</span></li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="sec-h">
+      <div class="k">Limits</div>
+      <div><h2>What it can't do yet</h2></div>
+    </div>
+    <div class="faq">
+      <div><h3>Where doesn't it run?</h3><p>Chrome blocks every extension on its own pages: chrome:// pages, the Chrome Web Store and the new-tab page.</p></div>
+      <div><h3>Why did nothing happen on a new page?</h3><p>Click the icon once on that page before capturing. Chrome only lets an extension screenshot pages where its icon was clicked.</p></div>
+      <div><h3>Does full height work sideways?</h3><p>No. It works up and down only, and elements wider than the screen are cut at the edge.</p></div>
+      <div><h3>Why does a header repeat in a tall shot?</h3><p>Sticky headers inside the scrolling area appear in every part of a stitched shot. Content that loads as you scroll may come out blank.</p></div>
+      <div><h3>Can it pick inside embedded content?</h3><p>Embedded content from other sites can't be picked into, except Claude artifacts. Marked elements must all be on the page, or all inside one artifact.</p></div>
+      <div><h3>Is it on the Chrome Web Store?</h3><p>No. It installs by loading the unpacked folder, which needs no account and no review. It also hasn't been checked on a Retina screen yet.</p></div>
+    </div>
+  </section>
+
+  <section id="changes">
+    <div class="sec-h">
+      <div class="k">What's new</div>
+      <div><h2>Recent changes</h2></div>
+    </div>
+    <div class="log">
+      <div class="e"><span class="v">1.4.1</span><span class="d">4 Nov 2026</span><span class="w">The panel stays above pages' modals, dialogs and overlays, and clicking it no longer closes them</span></div>
+      <div class="e"><span class="v">1.4.0</span><span class="d">3 Nov 2026</span><span class="w">Full-height capture, the Space key, Shift-marking several elements, and dragging an area</span></div>
+      <div class="e"><span class="v">1.3.0</span><span class="d">2 Nov 2026</span><span class="w">Copy all became a split button with Download all, and thumbnails can be dragged into other apps</span></div>
+      <a class="more" href="#" data-inert>Full change log <svg class="i" viewBox="0 0 24 24"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg></a>
+    </div>
+    <div class="sec-h" style="margin-top:64px">
+      <div class="k">Browsers</div>
+      <div><h2 style="font-size:24px">On Chrome today, other browsers next</h2></div>
+    </div>
+    <div class="browsers">
+      <div class="b now"><span class="nm"><svg class="chrome-ic" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257c.206.01.413.016.621.016 6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728 4.364 4.364 0 0 1 0 8.728Z"/></svg>Chrome</span><span class="st">Available now · 1.4.1</span></div>
+      <div class="b"><span class="nm">Edge</span><span class="st">Coming soon</span></div>
+      <div class="b"><span class="nm">Brave</span><span class="st">Coming soon</span></div>
+      <div class="b"><span class="nm">Arc</span><span class="st">Coming soon</span></div>
+      <div class="b"><span class="nm">Firefox</span><span class="st">Coming soon</span></div>
+      <div class="b"><span class="nm">Safari</span><span class="st">Coming soon</span></div>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="foot-cta">
+      <div>
+        <h2>Stop cropping screenshots</h2>
+        <p>Element Snap 1.4.1 for Chrome. Unzip, load, pin.</p>
+      </div>
+      <div class="btns">
+        <span class="ver"><svg class="chrome-ic" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0zM1.931 5.47A11.943 11.943 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257c.206.01.413.016.621.016 6.627 0 12-5.373 12-12 0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728 4.364 4.364 0 0 1 0 8.728Z"/></svg>Available for Chrome · v1.4.1</span>
+        <a class="btn primary" href="#" data-inert>
+          <svg class="i" viewBox="0 0 24 24"><path d="M12 15V3"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/></svg>
+          Download Element Snap 1.4.1
+        </a>
+      </div>
+    </div>
+    <div class="wm" aria-hidden="true">
+      <div class="wm-text">Element Snap</div>
+      <div class="wm-sel"><div class="marks"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i></div></div>
+      <div class="tagbox">footer.wordmark <b class="wm-size"></b></div>
+    </div>
+    <div class="foot-row">
+      <span class="logo" style="font-size:14px"><img src="images/icon128.png" alt="" width="20" height="20" style="width:20px;height:20px">Element Snap</span>
+      <span class="fver">Chrome extension · 2026</span>
+      <span class="spacer"></span>
+      <span class="sig">
+        <span class="by">Designed by</span>
+        <span class="nm"><i class="tl"></i><i class="tr"></i><i class="bl"></i><i class="br"></i>Sujith</span>
+        <span class="sep"></span>
+        <span class="role">Product designer at Tracxn</span>
+      </span>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // Placeholder links (Download, Full change log) look and press like links but go nowhere for now.
+  document.addEventListener("click", (e) => { if (e.target.closest("a[data-inert]")) e.preventDefault(); }, true);
+
+  // Hero preview: below 1024px the 900px mock is scaled to fit its box.
+  (() => {
+    const box = document.querySelector(".stage-box"), stage = box && box.querySelector(".stage");
+    if (!box) return;
+    const fit = () => {
+      if (innerWidth > 1024) { box.style.height = ""; box.style.removeProperty("--s"); return; }
+      const vw = parseFloat(getComputedStyle(box).getPropertyValue("--vw")) || 900;
+      const s = box.clientWidth / vw;
+      box.style.setProperty("--s", s.toFixed(4));
+      box.style.height = Math.round(560 * s) + "px";
+    };
+    fit(); new ResizeObserver(fit).observe(document.documentElement);
+  })();
+
+  // Navigation menu on small screens.
+  (() => {
+    const header = document.querySelector("header"), btn = document.querySelector(".menu-btn");
+    if (!btn) return;
+    const set = (open) => { header.classList.toggle("open", open); btn.setAttribute("aria-expanded", String(open)); };
+    btn.addEventListener("click", () => set(!header.classList.contains("open")));
+    document.querySelectorAll("#navlinks a").forEach((a) => a.addEventListener("click", () => set(false)));
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape") set(false); });
+    document.addEventListener("pointerdown", (e) => { if (!header.contains(e.target)) set(false); });
+  })();
+
+  // Footer: Element Snap selects its own wordmark when it scrolls into view.
+  (() => {
+    const wm = document.querySelector(".wm"), size = document.querySelector(".wm-size");
+    if (!wm) return;
+    const measure = () => { const r = wm.getBoundingClientRect(); size.textContent = Math.round(r.width) + " × " + Math.round(r.height); };
+    measure(); addEventListener("resize", measure);
+    if (!("IntersectionObserver" in window)) { wm.classList.add("in"); return; }
+    new IntersectionObserver((es, o) => { if (es.some((e) => e.isIntersecting)) { wm.classList.add("in"); o.disconnect(); } }, { threshold: 0.5 }).observe(wm);
+  })();
+
+  // Dot-matrix mouse trail over the hero background: moving the mouse stamps
+  // energy into a 7px grid; each frame it spreads to neighbours and fades, and
+  // a cell draws a 2px dot only when its energy beats its own random threshold.
+  (() => {
+    const canvas = document.getElementById("trail");
+    if (!canvas || !matchMedia("(hover: hover) and (pointer: fine)").matches ||
+        matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const CELL = 7, DOT = 2, RADIUS = 34 / CELL, STEP = 5.6, STRENGTH = 0.42, MAX = 1.6, DECAY = 0.95, SPREAD = 0.16;
+    const COLOR = "#ededed", FADE = 360;
+    const footer = document.querySelector("footer");
+    const ctx = canvas.getContext("2d");
+    let w = 0, h = 0, cols = 0, rows = 0, cur, nxt, thresh, last = null, running = false;
+    function resize() {
+      const dpr = Math.min(2, devicePixelRatio || 1);
+      w = canvas.clientWidth; h = canvas.clientHeight;
+      canvas.width = Math.floor(w * dpr); canvas.height = Math.floor(h * dpr);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      cols = Math.ceil(w / CELL) + 1; rows = Math.ceil(h / CELL) + 1;
+      cur = new Float32Array(cols * rows); nxt = new Float32Array(cols * rows); thresh = new Float32Array(cols * rows);
+      for (let i = 0; i < thresh.length; i++) thresh[i] = 0.03 + 0.42 * Math.random();
+    }
+    function stamp(x, y) {
+      const gx = x / CELL, gy = y / CELL;
+      const x0 = Math.max(0, Math.floor(gx - RADIUS)), x1 = Math.min(cols - 1, Math.ceil(gx + RADIUS));
+      const y0 = Math.max(0, Math.floor(gy - RADIUS)), y1 = Math.min(rows - 1, Math.ceil(gy + RADIUS));
+      for (let r = y0; r <= y1; r++) for (let c = x0; c <= x1; c++) {
+        const dx = (c - gx) / RADIUS, dy = (r - gy) / RADIUS, d2 = dx * dx + dy * dy;
+        if (d2 > 1) continue;
+        const i = r * cols + c;
+        cur[i] = Math.min(MAX, cur[i] + STRENGTH * (1 - d2) * (1 - d2));
+      }
+    }
+    function tick() {
+      let total = 0;
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+        const i = r * cols + c, v = cur[i];
+        const L = c > 0 ? cur[i - 1] : v, R = c < cols - 1 ? cur[i + 1] : v;
+        const U = r > 0 ? cur[i - cols] : v, D = r < rows - 1 ? cur[i + cols] : v;
+        const n = ((1 - SPREAD) * v + ((L + R + U + D) / 4) * SPREAD) * DECAY;
+        nxt[i] = n < 0.004 ? 0 : n; total += nxt[i];
+      }
+      [cur, nxt] = [nxt, cur];
+      ctx.clearRect(0, 0, w, h);
+      if (total <= 0) { running = false; return; }
+      ctx.fillStyle = COLOR;
+      // Fade the trail out over the last FADE px above the footer; none inside it.
+      const ft = footer ? footer.getBoundingClientRect().top : Infinity;
+      for (let r = 0; r < rows; r++) {
+        const k = Math.max(0, Math.min(1, (ft - r * CELL) / FADE));
+        if (k <= 0) break;
+        for (let c = 0; c < cols; c++) {
+        const i = r * cols + c, v = cur[i];
+        if (v < thresh[i]) continue;
+        ctx.globalAlpha = k * k * 0.6 * (v > 0.5 ? 1 : 0.55 + 0.9 * v);
+        ctx.fillRect(Math.round(c * CELL - 1), Math.round(r * CELL - 1), DOT, DOT);
+        }
+      }
+      ctx.globalAlpha = 1;
+      requestAnimationFrame(tick);
+    }
+    function onMove(e) {
+      const b = canvas.getBoundingClientRect();
+      const x = e.clientX - b.left, y = e.clientY - b.top;
+      if (x < 0 || y < 0 || x > b.width || y > b.height) { last = null; return; }
+      if (last) {
+        const steps = Math.max(1, Math.ceil(Math.hypot(x - last.x, y - last.y) / STEP));
+        for (let s = 1; s <= steps; s++) { const t = s / steps; stamp(last.x + (x - last.x) * t, last.y + (y - last.y) * t); }
+      } else stamp(x, y);
+      last = { x, y };
+      if (!running) { running = true; requestAnimationFrame(tick); }
+    }
+    resize();
+    new ResizeObserver(resize).observe(canvas);
+    addEventListener("pointermove", onMove, { passive: true });
+    document.addEventListener("mouseleave", () => { last = null; });
+  })();
+
+  // Every keycap on the page presses like a key: it dips on pointer down and clicks.
+  (() => {
+    let ctx;
+    function click(down) {
+      try {
+        ctx = ctx || new (window.AudioContext || window.webkitAudioContext)();
+        if (ctx.state === "suspended") ctx.resume();
+        const t = ctx.currentTime;
+        const o = ctx.createOscillator(), g = ctx.createGain(), f = ctx.createBiquadFilter();
+        o.type = "square"; o.frequency.setValueAtTime(down ? 1800 : 1400, t);
+        f.type = "lowpass"; f.frequency.value = down ? 2600 : 2000;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.exponentialRampToValueAtTime(down ? 0.18 : 0.1, t + 0.002);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + (down ? 0.045 : 0.03));
+        o.connect(f); f.connect(g); g.connect(ctx.destination);
+        o.start(t); o.stop(t + 0.06);
+      } catch (e) {}
+    }
+    let pressed = null;
+    const release = () => { if (!pressed) return; pressed.classList.remove("down"); pressed = null; click(false); };
+    document.addEventListener("pointerdown", (e) => {
+      const k = e.target.closest("kbd"); if (!k) return;
+      pressed = k; k.classList.add("down"); click(true);
+    });
+    document.addEventListener("pointerup", release);
+    document.addEventListener("pointercancel", release);
+    document.querySelectorAll("kbd").forEach((k) => {
+      k.setAttribute("tabindex", "0"); k.setAttribute("role", "button");
+      k.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat && !pressed) { e.preventDefault(); pressed = k; k.classList.add("down"); click(true); } });
+      k.addEventListener("keyup", (e) => { if (e.key === " " || e.key === "Enter") release(); });
+    });
+  })();
+</script>
+</body>
+</html>
